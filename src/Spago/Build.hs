@@ -36,6 +36,7 @@ import           System.FilePath      (splitDirectories)
 import qualified System.FilePath.Glob as Glob
 import qualified System.IO            as Sys
 import qualified System.IO.Temp       as Temp
+import qualified System.IO.Utf8       as Utf8
 import qualified Turtle
 import qualified System.Process       as Process
 import qualified Web.Browser          as Browser
@@ -189,7 +190,7 @@ repl cacheFlag newPackages sourcePaths pursArgs depsOnly = do
       Purs.repl globs pursArgs
     Left (err :: SomeException) -> do
       logDebug $ display err
-      cacheDir <- askEnv envGlobalCache
+      cacheDir <- view globalCacheL
       Temp.withTempDirectory cacheDir "spago-repl-tmp" $ \dir -> do
         Turtle.cd (Turtle.decodeString dir)
 
@@ -299,7 +300,7 @@ bundleModule maybeModuleName maybeTargetPath noBuild buildOpts = do
         -- Here we append the CommonJS export line at the end of the bundle
         try (with
               (appendonly $ pathFromText $ Purs.unTargetPath targetPath)
-              (flip hPutStrLn jsExport))
+              (\fileHandle -> Utf8.withHandle fileHandle (Sys.hPutStrLn fileHandle jsExport)))
           >>= \case
             Right _ -> logInfo $ display $ "Make module succeeded and output file to " <> Purs.unTargetPath targetPath
             Left (n :: SomeException) -> die [ "Make module failed: " <> repr n ]
@@ -385,7 +386,7 @@ getOutputPath
   :: BuildOptions
   -> Spago (Maybe Sys.FilePath)
 getOutputPath buildOpts = do
-  configPath <- askEnv envConfigPath
+  configPath <- view configPathL
   outputPath <- PackageSet.findRootOutputPath (Text.unpack configPath)
   case findOutputFlag (pursArgs buildOpts) of
     Just path -> pure (Just path)

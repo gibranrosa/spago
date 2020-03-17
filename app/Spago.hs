@@ -4,11 +4,11 @@ import           Spago.Prelude
 
 import qualified Data.Text           as Text
 import           Data.Version        (showVersion)
-import qualified GHC.IO.Encoding
 import qualified Options.Applicative as Opts
 import qualified Paths_spago         as Pcli
 import qualified System.Environment  as Env
 import qualified Turtle              as CLI
+import           Main.Utf8           (withUtf8)
 
 import           Spago.Build         (BuildOptions (..), DepsOnly (..), ExtraArg (..),
                                       ModuleName (..), NoBuild (..), NoInstall (..), NoSearch (..),
@@ -19,6 +19,7 @@ import qualified Spago.Build
 import qualified Spago.Config        as Config
 import           Spago.Dhall         (TemplateComments (..))
 import           Spago.DryRun        (DryRun (..))
+import           Spago.Env
 import qualified Spago.GitHub
 import           Spago.GlobalCache   (CacheFlag (..), getGlobalCacheDir)
 import           Spago.Messages      as Messages
@@ -380,12 +381,18 @@ printVersion = CLI.echo $ CLI.unsafeTextToLine $ Text.pack $ showVersion Pcli.ve
 runWithEnv :: GlobalOptions -> Spago a -> IO a
 runWithEnv GlobalOptions{..} app = do
   let verbose = not globalQuiet && (globalVerbose || globalVeryVerbose)
+
+  -- https://github.com/purescript/spago/issues/579
+  maybeTerm <- Env.lookupEnv "TERM"
+  let termDumb = maybeTerm == Just "dumb" || maybeTerm == Just "win"
+  let useColor = globalUseColor && not termDumb
+
   let logHandle = stderr
   logOptions' <- logOptionsHandle logHandle verbose
   let logOptions
         = setLogUseTime globalVeryVerbose
         $ setLogUseLoc globalVeryVerbose
-        $ setLogUseColor globalUseColor
+        $ setLogUseColor useColor
         $ setLogVerboseFormat True logOptions'
   withLogFunc logOptions $ \logFunc -> do
     let logFunc' :: LogFunc
@@ -409,9 +416,7 @@ runWithEnv GlobalOptions{..} app = do
     runRIO env app
 
 main :: IO ()
-main = do
-  -- We always want to run in UTF8 anyways
-  -- GHC.IO.Encoding.setLocaleEncoding GHC.IO.Encoding.utf8
+main = withUtf8 $ do
   -- Stop `git` from asking for input, not gonna happen
   -- We just fail instead. Source:
   -- https://serverfault.com/questions/544156

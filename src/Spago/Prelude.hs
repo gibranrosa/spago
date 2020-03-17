@@ -4,7 +4,12 @@ module Spago.Prelude
   , hush
   , pathFromText
   , assertDirectory
-  , Env (..)
+  , Env
+  , HasEnv(..)
+  , HasGlobalCache(..)
+  , HasConfigPath(..)
+  , HasJobs(..)
+  , HasPsa(..)
   , UsePsa(..)
   , Spago
   , module X
@@ -37,7 +42,6 @@ module Spago.Prelude
   , lastMay
   , shouldRefreshFile
   , makeAbsolute
-  , hPutStrLn
   , empty
   , callCommand
   , shell
@@ -61,18 +65,17 @@ module Spago.Prelude
   , pretty
   , output
   , outputStr
-  , askEnv
   ) where
 
 
 import qualified Control.Concurrent.Async.Pool         as Async
+import           Control.Monad.Catch                   (MonadMask)
 import qualified Data.Text                             as Text
 import qualified Data.Text.Prettyprint.Doc             as Pretty
 import qualified Data.Text.Prettyprint.Doc.Render.Text as PrettyText
 import qualified Data.Time                             as Time
 import           Dhall                                 (Text)
 import qualified Dhall.Core
-import qualified GHC.IO
 import qualified System.FilePath                       as FilePath
 import qualified System.IO
 import qualified Turtle
@@ -91,19 +94,21 @@ import           Data.List.NonEmpty                    (NonEmpty (..))
 import           Data.Maybe                            as X
 import           Data.Sequence                         (Seq (..))
 import           Data.Text.Prettyprint.Doc             (Pretty)
+import           Data.Text.IO.Utf8                     (readFile, writeFile)
 import           Dhall.Optics                          (transformMOf)
 import           Lens.Family                           ((^..))
 import           RIO                                   as X hiding (FilePath, first, force, second)
 import           RIO.Orphans                           as X
 import           Safe                                  (headMay, lastMay)
 import           System.FilePath                       (isAbsolute, pathSeparator, (</>))
-import           System.IO                             (hPutStrLn)
 import           Turtle                                (ExitCode (..), FilePath, appendonly, chmod,
                                                         executable, mktree, repr, shell,
                                                         shellStrict, shellStrictWithErr,
                                                         systemStrictWithErr, testdir)
 import           UnliftIO.Directory                    (getModificationTime, makeAbsolute)
 import           UnliftIO.Process                      (callCommand)
+
+import           Spago.Env
 
 
 -- | Generic Error that we throw on program exit.
@@ -114,30 +119,7 @@ instance Show SpagoError where
   show (SpagoError err) = Text.unpack err
 
 
--- | Flag to disable the automatic use of `psa`
-data UsePsa = UsePsa | NoPsa
-
--- | App configuration containing parameters and other common
---   things it's useful to compute only once at startup.
-data Env = Env
-  { envUsePsa      :: UsePsa
-  , envJobs        :: Int
-  , envConfigPath  :: Text
-  , envGlobalCache :: GHC.IO.FilePath
-  , envLogFunc     :: !LogFunc
-  }
-
-instance HasLogFunc Env where
-  logFuncL = lens envLogFunc (\x y -> x { envLogFunc = y })
-
-
 type Spago = RIO Env
-
-
--- | Facility to easily get global parameters from the environment
-askEnv :: (Env -> a) -> Spago a
-askEnv = view . to
-
 
 output :: MonadIO m => Text -> m ()
 output = Turtle.printf (Turtle.s Turtle.% "\n")
@@ -161,11 +143,11 @@ testfile :: MonadIO m => Text -> m Bool
 testfile = Turtle.testfile . pathFromText
 
 readTextFile :: MonadIO m => Turtle.FilePath -> m Text
-readTextFile = liftIO . Turtle.readTextFile
+readTextFile = readFile . Turtle.encodeString
 
 
-writeTextFile :: MonadIO m => Text -> Text -> m ()
-writeTextFile path text = liftIO $ Turtle.writeTextFile (Turtle.fromText path) text
+writeTextFile :: (MonadIO m, MonadMask m) => Text -> Text -> m ()
+writeTextFile path text = writeFile (Text.unpack path) text
 
 
 with :: MonadIO m => Turtle.Managed a -> (a -> IO r) -> m r
